@@ -201,6 +201,98 @@ app.get('/api/winner/:rfpId', (req, res) => {
   res.json(scored[0]);
 });
 
+// ✅===============================
+// ✅ AUTO IMAP EMAIL LISTENER (FREE MODE)
+// ✅===============================
+const Imap = require('imap');
+const { simpleParser } = require('mailparser');
+
+const imap = new Imap({
+  user: process.env.IMAP_USER,
+  password: process.env.IMAP_PASS,
+  host: 'imap.gmail.com',
+  port: 993,
+  tls: true,
+  tlsOptions: { rejectUnauthorized: false }
+});
+
+let lastUID = 0;
+
+if (fs.existsSync('imap-state.json')) {
+  try {
+    lastUID = JSON.parse(fs.readFileSync('imap-state.json')).lastUID || 0;
+  } catch {
+    lastUID = 0;
+  }
+}
+
+function saveLastUID(uid) {
+  fs.writeFileSync('imap-state.json', JSON.stringify({ lastUID: uid }));
+}
+
+imap.once('ready', () => {
+  console.log('✅ IMAP CONNECTED (FREE MODE)');
+
+  imap.openBox('INBOX', true, () => {
+    console.log('📥 Auto-listening for vendor replies...');
+  });
+
+  // ✅ Poll Gmail every 20 seconds (FREE SAFE METHOD)
+  setInterval(fetchNewReplies, 20000);
+});
+
+function fetchNewReplies() {
+  imap.search([['UID', `${lastUID + 1}:*`]], (err, results) => {
+    if (err || !results.length) return;
+
+    const fetch = imap.fetch(results, { bodies: '', markSeen: true });
+
+    fetch.on('message', msg => {
+      let uid;
+
+      msg.on('attributes', attrs => {
+        uid = attrs.uid;
+      });
+
+      msg.on('body', stream => {
+        simpleParser(stream, (err, parsed) => {
+          if (err) return;
+
+          const subject = parsed.subject || '';
+          const body = parsed.text || '';
+          const from = parsed.from?.text || '';
+
+          // ✅ ONLY ACCEPT RFP REPLIES
+          if (!subject.includes('RFP REPLY')) return;
+
+          const rfpMatch = subject.match(/RFP ID:\s*(\d+)/);
+          const rfpId = rfpMatch ? rfpMatch[1] : null;
+
+          const priceMatch = body.match(/Price:\s*\$?\d+/i);
+          const deliveryMatch = body.match(/Delivery:\s*\d+\s*days/i);
+
+          const proposal = {
+            rfpId,
+            vendor: from,
+            offer: priceMatch ? priceMatch[0].replace('Price:', '').trim() : 'Not detected',
+            delivery: deliveryMatch ? deliveryMatch[0].replace('Delivery:', '').trim() : 'Not detected'
+          };
+
+          proposals.push(proposal);
+          fs.writeFileSync('proposals.json', JSON.stringify(proposals, null, 2));
+
+          saveLastUID(uid);
+
+          console.log('✅ LIVE VENDOR REPLY SAVED:', proposal);
+        });
+      });
+    });
+  });
+}
+
+imap.once('error', err => console.error('❌ IMAP ERROR:', err));
+imap.connect();
+
 // ================================
 app.listen(4000, () => {
   console.log('✅ Backend running on http://localhost:4000');
