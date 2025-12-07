@@ -1,1 +1,1 @@
-export const API_URL = "https://ai-rfp1.onrender.com";
+VITE_API_URL = "https://ai-rfp-1-cne5.onrender.com";
