@@ -1,9 +1,71 @@
 // frontend/src/components/RfpDetail.jsx
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import { API_URL } from "../config"; // make sure frontend/src/config.js exists and exports API_URL
+import { API_URL } from "../config"; // keep your config file
 
-/* Small SimulateReply included so this file is self-contained */
+/* ----------------- Small helper components ----------------- */
+
+/* SendRfpButton: calls the backend /api/send-rfp endpoint */
+function SendRfpButton({ rfpId, selectedVendorIds = [], onSent }) {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  async function handleSend() {
+    if (!rfpId) return alert("No RFP selected");
+    if (!selectedVendorIds || selectedVendorIds.length === 0) return alert("Select at least one vendor");
+
+    setError(null);
+    setLoading(true);
+    try {
+      // call the centralized endpoint: POST /api/send-rfp
+      const res = await axios.post(`${API_URL}/api/send-rfp`, {
+        rfpId,
+        vendorIds: selectedVendorIds
+      });
+      setResult(res.data);
+      setLoading(false);
+      alert("RFP sent. Check vendor inboxes.");
+      if (onSent) onSent(res.data);
+    } catch (err) {
+      console.error("sendRfp error:", err);
+      setError(err?.response?.data?.error || err.message || "Send failed");
+      setLoading(false);
+      alert("Send failed: " + (err?.response?.data?.error || err.message));
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <button
+        onClick={handleSend}
+        disabled={loading || !selectedVendorIds?.length}
+        style={{
+          background: "#2563eb",
+          color: "white",
+          padding: "8px 14px",
+          borderRadius: 6,
+          border: "none",
+          cursor: loading ? "not-allowed" : "pointer",
+        }}
+      >
+        {loading ? "Sending..." : "Send RFP to selected vendors"}
+      </button>
+
+      {error && <div style={{ color: "crimson", marginTop: 8 }}>{error}</div>}
+
+      {result && (
+        <div style={{ marginTop: 8, background: "#f3f4f6", padding: 8, borderRadius: 6 }}>
+          <strong>Send result:</strong>
+          <pre style={{ whiteSpace: "pre-wrap", maxHeight: 200, overflow: "auto" }}>{JSON.stringify(result, null, 2)}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Small SimulateReply included so this file stays self-contained.
+   This will call your simulate endpoint (dev only). */
 function SimulateReply({ rfpId, onDone, vendors = [] }) {
   const [vendorId, setVendorId] = useState(vendors[0]?._id || "");
   const [text, setText] = useState("");
@@ -30,13 +92,30 @@ function SimulateReply({ rfpId, onDone, vendors = [] }) {
 
   return (
     <div>
-      <h4 style={{ marginTop: 0 }}>Simulate Vendor Reply</h4>
+      <h4 style={{ marginTop: 0 }}>Simulate Vendor Reply (dev only)</h4>
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-        <select value={vendorId || ""} onChange={(e) => setVendorId(e.target.value)} style={{ padding: 8, borderRadius: 8 }}>
+        <select
+          value={vendorId || ""}
+          onChange={(e) => setVendorId(e.target.value)}
+          style={{ padding: 8, borderRadius: 8 }}
+        >
           <option value="">-- select vendor --</option>
-          {vendors.map(v => <option key={v._id} value={v._1d || v._id}>{v.name} ({v.email})</option>)}
+          {vendors.map(v => (
+            <option key={v._id} value={v._id}>
+              {v.name} ({v.email})
+            </option>
+          ))}
         </select>
-        <button onClick={() => setText("We can supply 20 laptops at $1950 each (total $39,000); monitors 15 at $160 each (total $2,400). Delivery in 30 days. 2 years warranty. Net45.")}>Sample</button>
+
+        <button
+          onClick={() =>
+            setText(
+              "We can supply 20 laptops at $1950 each (total $39,000); monitors 15 at $160 each (total $2,400). Delivery in 30 days. 2 years warranty. Net45."
+            )
+          }
+        >
+          Sample
+        </button>
       </div>
 
       <textarea
@@ -53,7 +132,7 @@ function SimulateReply({ rfpId, onDone, vendors = [] }) {
   );
 }
 
-/* ---------- Main component ---------- */
+/* ----------------- Main component ----------------- */
 export default function RfpDetail({ rfpId }) {
   const [data, setData] = useState(null); // { rfp, proposals }
   const [vendors, setVendors] = useState([]); // single source of truth for vendors
@@ -75,7 +154,6 @@ export default function RfpDetail({ rfpId }) {
   async function loadVendors() {
     try {
       const r = await axios.get(`${API_URL}/api/vendors`);
-      // Expect r.data to be an array
       setVendors(Array.isArray(r.data) ? r.data : []);
     } catch (err) {
       console.error("loadVendors error:", err);
@@ -87,7 +165,6 @@ export default function RfpDetail({ rfpId }) {
     if (!newVendorName || !newVendorEmail) return alert("Enter name and email");
     try {
       const r = await axios.post(`${API_URL}/api/vendors`, { name: newVendorName, email: newVendorEmail });
-      // if API returns the created vendor, append it, otherwise reload
       if (r?.data) setVendors(prev => [...prev, r.data]);
       else await loadVendors();
       setNewVendorName("");
@@ -103,9 +180,8 @@ export default function RfpDetail({ rfpId }) {
     setLoading(true);
     try {
       const r = await axios.get(`${API_URL}/api/rfps/${rfpId}`);
-      // r.data expected { rfp, proposals }
       setData(r.data || null);
-      // ensure selectedVendorIds is string array
+      // If the RFP has preselected vendor IDs (optional), set them:
       const sel = (r.data?.rfp?.selectedVendors || []).map(v => String(v._id || v));
       setSelectedVendorIds(sel);
     } catch (err) {
@@ -116,15 +192,35 @@ export default function RfpDetail({ rfpId }) {
     }
   }
 
+  /* ---------- Sending (real) ---------- */
   async function sendSelected() {
     if (!rfpId) return alert("No RFP");
+    if (!selectedVendorIds || selectedVendorIds.length === 0) return alert("Select at least one vendor");
+
     try {
-      await axios.post(`${API_URL}/api/rfps/${rfpId}/send`, { vendorIds: selectedVendorIds });
-      alert("RFP sent (simulated)");
-      loadRfp();
+      // Primary: call central endpoint
+      const res = await axios.post(`${API_URL}/api/send-rfp`, {
+        rfpId,
+        vendorIds: selectedVendorIds
+      });
+      // backend returns info about sends
+      console.log("send-rfp response", res.data);
+      alert("RFP emails sent. Check vendor inboxes.");
+      // refresh RFP/proposals
+      await loadRfp();
     } catch (err) {
       console.error("sendSelected error:", err);
-      alert("Send failed: " + (err?.response?.data?.error || err.message));
+
+      // Fallback: if your backend uses a different endpoint, try the per-rfp send
+      try {
+        const fallback = await axios.post(`${API_URL}/api/rfps/${rfpId}/send`, { vendorIds: selectedVendorIds });
+        console.log("fallback send response", fallback.data);
+        alert("RFP emails sent (fallback).");
+        await loadRfp();
+      } catch (err2) {
+        console.error("fallback send failed", err2);
+        alert("Send failed: " + (err2?.response?.data?.error || err2?.message || "unknown"));
+      }
     }
   }
 
@@ -185,13 +281,13 @@ export default function RfpDetail({ rfpId }) {
   }
 
   function ProposalCard({ p }) {
-    const parsed = p?.parsed || {};
+    const parsed = p?.parsed || p?.parsedJson || {};
     return (
       <div className="proposal-card" style={{ padding: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
           <div style={{ maxWidth: "70%" }}>
             <div style={{ fontWeight: 700 }}>{p.vendorId?.name || p.vendorId?.email || "Vendor"}</div>
-            <div style={{ color: "#6b7280", marginTop: 6 }}>{p.aiSummary || parsed.notes || p.rawText?.slice(0, 140)}</div>
+            <div style={{ color: "#6b7280", marginTop: 6 }}>{p.aiSummary || parsed.notes || p.rawText?.slice(0, 140) || p.rawBody?.slice(0,140)}</div>
             <div style={{ marginTop: 8 }}>
               <strong>Total:</strong> {parsed.totalPrice != null ? `${parsed.currency || "$"}${parsed.totalPrice}` : "—"} &nbsp;
               <strong>Delivery:</strong> {parsed.deliveryDays ? `${parsed.deliveryDays} days` : "—"}
@@ -212,8 +308,7 @@ export default function RfpDetail({ rfpId }) {
   /* ---------- final render ---------- */
   return (
     <div>
-      {/* LEFT: Created JSON / Create RFP card in your app may be elsewhere.
-          Here we show RFP summary on top and vendors below. */}
+      {/* RFP Summary */}
       <div style={{ marginBottom: 12 }}>
         <div className="card" style={{ padding: 16 }}>
           <h2 style={{ marginTop: 0 }}>RFP Detail</h2>
@@ -221,23 +316,25 @@ export default function RfpDetail({ rfpId }) {
         </div>
       </div>
 
-      {/* VENDORS MANAGEMENT */}
+      {/* Vendors management */}
       <div className="card" style={{ marginBottom: 12, padding: 16 }}>
         <h3 style={{ marginTop: 0 }}>Vendors</h3>
 
-      
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <input value={newVendorName} onChange={(e) => setNewVendorName(e.target.value)} placeholder="Name" />
+          <input value={newVendorEmail} onChange={(e) => setNewVendorEmail(e.target.value)} placeholder="Email" />
+          <button onClick={addVendor}>Add</button>
+        </div>
 
-        {/* Simple list */}
         <ul style={{ marginTop: 8 }}>
           {vendors.map(v => <li key={v._id}>{v.name} — {v.email}</li>)}
         </ul>
       </div>
 
-      {/* SELECT VENDORS TO SEND */}
+      {/* Select vendors to send */}
       <div className="card" style={{ marginBottom: 12, padding: 16 }}>
         <h3 style={{ marginTop: 0 }}>Select vendors to send</h3>
 
-        {/* IMPORTANT: use the same 'vendors' state for rendering these rows */}
         <div>
           {vendors.length === 0 ? (
             <div style={{ color: "#6b7280" }}>No vendors yet</div>
@@ -262,11 +359,15 @@ export default function RfpDetail({ rfpId }) {
         </div>
 
         <div style={{ marginTop: 12 }}>
-          <button onClick={sendSelected}>Send RFP to selected vendors (simulated)</button>
+          {/* Use real sending button */}
+          <SendRfpButton rfpId={rfpId} selectedVendorIds={selectedVendorIds} onSent={loadRfp} />
+
+          {/* Optional: keep the old simulated button for dev only (commented out) */}
+          {/* <button onClick={sendSelected}>Send RFP to selected vendors (simulated)</button> */}
         </div>
       </div>
 
-      {/* Simulate reply */}
+      {/* Simulate reply (dev tool) */}
       <div className="card" style={{ marginBottom: 12, padding: 16 }}>
         <SimulateReply rfpId={rfpId} onDone={loadRfp} vendors={vendors} />
       </div>
@@ -274,6 +375,7 @@ export default function RfpDetail({ rfpId }) {
       {/* Proposals */}
       <div className="card" style={{ marginBottom: 12, padding: 16 }}>
         <h3 style={{ marginTop: 0 }}>Proposals</h3>
+
         {(!data || !data.proposals || data.proposals.length === 0) ? (
           <div style={{ color: "#6b7280" }}>No proposals yet</div>
         ) : (
@@ -286,7 +388,6 @@ export default function RfpDetail({ rfpId }) {
           <button onClick={doCompare}>Show comparison</button>
         </div>
 
-        {/* pretty compare area */}
         {compare && (
           <div style={{ marginTop: 12 }}>
             <h3>Comparison</h3>

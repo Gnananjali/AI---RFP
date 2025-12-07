@@ -1,50 +1,26 @@
-// frontend/src/App.jsx
-import React, { useState } from 'react';
-import RfpCreate from './components/RfpCreate';
-import Vendors from './components/Vendors';
-import RfpDetail from './components/RfpDetail';
-import './styles.css';
+import { useState } from "react";
+import Vendors from "./components/Vendors";
+import RfpCreate from "./components/RfpCreate";
+import SelectVendors from "./components/SelectVendors";
+import Proposals from "./components/Proposals";
+import RfpSummary from "./components/RfpSummary";
 
 export default function App() {
   const [selectedRfp, setSelectedRfp] = useState(null);
 
   return (
-    <div className="app-shell">
-      {/* Topbar */}
-      <div className="topbar">
-        <div className="brand">
-          <div className="logo">AR</div>
-          <h1>AI RFP</h1>
-        </div>
+    <div style={{ padding: 20 }}>
+      <h1>AI RFP System</h1>
 
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <div className="muted">Single-user demo</div>
-          <button className="secondary">Docs</button>
-        </div>
-      </div>
+      <RfpCreate onRfpCreated={setSelectedRfp} />
 
-      {/* Main grid */}
-      <div className="grid">
-        {/* LEFT column */}
-        <div>
-          <div className="card" style={{ marginBottom: 18 }}>
-            <RfpCreate onCreated={(rfp) => setSelectedRfp(rfp)} />
-          </div>
+      <RfpSummary rfp={selectedRfp} />
 
-          <div className="card">
-            <Vendors />
-          </div>
-        </div>
+      <Vendors />
 
-        {/* RIGHT column */}
-        <div>
-          <div className="card">
-            <RfpDetail rfpId={selectedRfp?._id} />
-          </div>
-        </div>
-      </div>
+      <SelectVendors selectedRfpId={selectedRfp?._id} />
 
-      <div className="footer-space" />
+      <Proposals selectedRfpId={selectedRfp?._id} />
     </div>
   );
 }

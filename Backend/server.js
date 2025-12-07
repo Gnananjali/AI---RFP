@@ -1,80 +1,207 @@
-// Backend/server.js
-const path = require("path");
-const express = require("express");
-const mongoose = require("mongoose");
-const cors = require("cors");
-require("dotenv").config({ path: path.join(__dirname, ".env") });
+require('dotenv').config();
+const fs = require('fs');
+const express = require('express');
+const cors = require('cors');
+const nodemailer = require('nodemailer');
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
-// CORS: allow only FRONTEND_URL if provided, otherwise allow all (use '*' only for quick testing)
-const FRONTEND_URL = process.env.FRONTEND_URL || process.env.VITE_FRONTEND_URL || null;
-if (FRONTEND_URL) {
-  app.use(cors({ origin: FRONTEND_URL }));
-  console.log("CORS configured for origin:", FRONTEND_URL);
-} else {
-  app.use(cors());
-  console.log("CORS configured: allowing all origins (not recommended for production)");
+// ================================
+//  SAFE FILE HELPERS
+// ================================
+function safeReadJSON(file, fallback = []) {
+  if (!fs.existsSync(file)) return fallback;
+  try {
+    const data = fs.readFileSync(file, 'utf8').trim();
+    return data ? JSON.parse(data) : fallback;
+  } catch {
+    fs.writeFileSync(file, JSON.stringify(fallback, null, 2));
+    return fallback;
+  }
 }
 
-// --- Connect MongoDB ---
-const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI || process.env.MONGOURL || "mongodb://localhost:27017/ai_rfp";
-mongoose
-  .connect(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log("MongoDB connected"))
-  .catch((err) => {
-    console.error("MongoDB connect error:", err);
-    // don't exit - allow app to continue (so Render logs show the error)
+// ================================
+//  PERSISTENT STORAGE
+// ================================
+let vendors = safeReadJSON('vendors.json', []);
+let proposals = safeReadJSON('proposals.json', []);
+let rfps = [];
+
+function saveVendors() {
+  fs.writeFileSync('vendors.json', JSON.stringify(vendors, null, 2));
+}
+
+function saveProposals() {
+  fs.writeFileSync('proposals.json', JSON.stringify(proposals, null, 2));
+}
+
+// ================================
+//  EMAIL TRANSPORT
+// ================================
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS
+  }
+});
+
+// ================================
+//  TEST ROUTE
+// ================================
+app.get('/', (req, res) => {
+  res.send('✅ Backend is running');
+});
+
+// ================================
+//  VENDORS API
+// ================================
+app.get('/api/vendors', (req, res) => {
+  res.json(vendors);
+});
+
+app.post('/api/vendors', (req, res) => {
+  const { name, email } = req.body;
+
+  if (!name || !email) {
+    return res.status(400).json({ error: 'Name & Email required' });
+  }
+
+  const vendor = {
+    _id: Date.now().toString(),
+    name,
+    email
+  };
+
+  vendors.push(vendor);
+  saveVendors();
+
+  console.log('✅ Vendor added:', vendor);
+  res.json(vendor);
+});
+
+// ================================
+//  RFP API
+// ================================
+app.post('/api/rfps', (req, res) => {
+  const { nlText } = req.body;
+  if (!nlText) return res.status(400).json({ error: 'RFP text required' });
+
+  const text = nlText.toLowerCase();
+
+  const items = [];
+  if (text.includes('laptop')) items.push('Laptops');
+  if (text.includes('monitor')) items.push('Monitors');
+  if (text.includes('printer')) items.push('Printers');
+
+  const budget = nlText.match(/\$[\d,]+/)?.[0] || null;
+  const deliveryMatch = nlText.match(/(\d+)\s*days/);
+  const delivery = deliveryMatch ? deliveryMatch[1] + ' days' : null;
+
+  const paymentTerms =
+    text.includes('net30') ? 'Net30' :
+    text.includes('net45') ? 'Net45' :
+    null;
+
+  const rfp = {
+    _id: Date.now().toString(),
+    text: nlText,
+    structured: { items, budget, delivery, paymentTerms }
+  };
+
+  rfps.push(rfp);
+  console.log('✅ RFP CREATED:', rfp);
+  res.json(rfp);
+});
+
+app.get('/api/rfps', (req, res) => {
+  res.json(rfps);
+});
+
+// ================================
+//  SEND RFP EMAIL
+// ================================
+app.post('/api/send-rfp', async (req, res) => {
+  console.log("✅ SEND RFP BODY RECEIVED:", req.body);
+
+  const { vendorIds, rfpText, rfpId } = req.body;
+
+  if (!Array.isArray(vendorIds) || vendorIds.length === 0) {
+    return res.status(400).json({ error: 'No vendors selected' });
+  }
+
+  if (!rfpText || !rfpId) {
+    return res.status(400).json({ error: 'Invalid RFP data' });
+  }
+
+  const selectedVendors = vendors.filter(v =>
+    vendorIds.includes(v._id)
+  );
+
+  try {
+    for (let vendor of selectedVendors) {
+      await transporter.sendMail({
+        from: process.env.SMTP_USER,
+        to: vendor.email,
+        subject: `RFP REPLY | RFP ID: ${rfpId}`,
+        text: `
+RFP ID: ${rfpId}
+
+${rfpText}
+
+=========================
+REPLY WITH:
+Subject: RFP REPLY | RFP ID: ${rfpId}
+
+Price:
+Delivery:
+=========================
+`
+      });
+    }
+
+    console.log('✅ RFP EMAILS SENT');
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error('❌ EMAIL ERROR:', err);
+    res.status(500).json({ error: 'Email sending failed' });
+  }
+});
+
+// ================================
+//  PROPOSALS API
+// ================================
+app.get('/api/proposals', (req, res) => {
+  proposals = safeReadJSON('proposals.json', []);
+  res.json(proposals);
+});
+
+// ================================
+//  AI BEST WINNER API
+// ================================
+app.get('/api/winner/:rfpId', (req, res) => {
+  proposals = safeReadJSON('proposals.json', []);
+
+  const rfpProposals = proposals.filter(
+    p => p.rfpId === req.params.rfpId
+  );
+
+  if (rfpProposals.length === 0) return res.json(null);
+
+  const scored = rfpProposals.map(p => {
+    const price = parseInt((p.offer || '').replace(/\D/g, '')) || 999999;
+    const delivery = parseInt((p.delivery || '').replace(/\D/g, '')) || 999999;
+    return { ...p, score: price + delivery };
   });
 
-// --- Route wiring ---
-// try to load routers safely (support common filename variants)
-try {
-  const rfpRouter = require("./routes/rfp");
-  app.use("/api/rfps", rfpRouter);
-  console.log("Loaded routes: /api/rfps -> ./routes/rfp");
-} catch (err) {
-  console.error("Failed to load ./routes/rfp:", err.message || err);
-}
-
-try {
-  // attempt plural 'vendors' first, then singular 'vendor'
-  let vendorRouter;
-  try {
-    vendorRouter = require("./routes/vendors");
-    console.log("Loaded routes: /api/vendors -> ./routes/vendors");
-  } catch (_) {
-    vendorRouter = require("./routes/vendor");
-    console.log("Loaded routes: /api/vendors -> ./routes/vendor");
-  }
-  app.use("/api/vendors", vendorRouter);
-} catch (err) {
-  console.error("Failed to load vendor routes (./routes/vendors or ./routes/vendor):", err.message || err);
-}
-
-// health
-app.get("/api/health", (req, res) => res.json({ ok: true }));
-
-// static / catch-all for production (optional)
-// If you want to serve the built frontend from the same service, build the frontend into Backend/../Frontend/dist
-// and uncomment the lines below.
-// const frontendDist = path.join(__dirname, "../Frontend/dist");
-// if (process.env.SERVE_FRONTEND === "true" && require("fs").existsSync(frontendDist)) {
-//   app.use(express.static(frontendDist));
-//   app.get("*", (req, res) => res.sendFile(path.join(frontendDist, "index.html")));
-//   console.log("Serving frontend from:", frontendDist);
-// }
-
-// Graceful process handling & unhandled rejections
-process.on("unhandledRejection", (reason) => {
-  console.error("UNHANDLED REJECTION:", reason);
+  scored.sort((a, b) => a.score - b.score);
+  res.json(scored[0]);
 });
 
-process.on("uncaughtException", (err) => {
-  console.error("UNCAUGHT EXCEPTION:", err);
+// ================================
+app.listen(4000, () => {
+  console.log('✅ Backend running on http://localhost:4000');
 });
-
-// Start server
-const PORT = Number(process.env.PORT || 4000);
-app.listen(PORT, () => console.log(`Backend listening at ${PORT}`));
