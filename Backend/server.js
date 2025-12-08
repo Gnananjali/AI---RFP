@@ -299,6 +299,11 @@ app.delete("/api/clear-proposals", (req, res) => {
   res.json({ success: true, message: "✅ All proposals cleared" });
 });
 
+app.get("/api/clear-proposals", (req, res) => {
+  proposals = [];
+  fs.writeFileSync("proposals.json", JSON.stringify([], null, 2));
+  res.json({ success: true, message: "✅ All proposals cleared (GET)" });
+});
 
 // ================================
 app.listen(4000, () => {
