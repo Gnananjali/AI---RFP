@@ -217,6 +217,10 @@ const imap = new Imap({
 });
 
 let lastUID = 0;
+// 🔥 FORCE RESET OLD EMAIL HISTORY (ONE-TIME CLEANUP)
+fs.writeFileSync("imap-state.json", JSON.stringify({ lastUID: 999999 }));
+lastUID = 999999;
+
 
 if (fs.existsSync('imap-state.json')) {
   try {
