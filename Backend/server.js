@@ -293,6 +293,13 @@ function fetchNewReplies() {
 imap.once('error', err => console.error('❌ IMAP ERROR:', err));
 imap.connect();
 
+app.delete("/api/clear-proposals", (req, res) => {
+  proposals = [];
+  fs.writeFileSync("proposals.json", JSON.stringify([], null, 2));
+  res.json({ success: true, message: "✅ All proposals cleared" });
+});
+
+
 // ================================
 app.listen(4000, () => {
   console.log('✅ Backend running on http://localhost:4000');
